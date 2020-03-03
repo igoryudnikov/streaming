@@ -49,7 +49,7 @@ object BotDetectorApp {
 
     val streamingContext = StreamingContext.getActiveOrCreate(() => {
       val sc = new StreamingContext(sparkSession.sparkContext, Seconds(10))
-      // sc.checkpoint(checkpointDir)
+
       KafkaUtils.createDirectStream[String, String](
         sc,
         PreferConsistent,
