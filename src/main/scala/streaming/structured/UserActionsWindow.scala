@@ -1,4 +1,4 @@
-package streaming
+package streaming.structured
 
 import java.sql.Timestamp
 

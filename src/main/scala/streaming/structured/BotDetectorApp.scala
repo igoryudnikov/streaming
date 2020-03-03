@@ -1,21 +1,19 @@
-package streaming
-
+package streaming.structured
 
 import java.util.UUID.randomUUID
 
-import com.datastax.spark.connector._
-import org.apache.ignite.configuration.{CacheConfiguration, _}
+import org.apache.ignite.configuration.{CacheConfiguration, IgniteConfiguration}
 import org.apache.ignite.spark.IgniteContext
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.sql.cassandra._
-import org.apache.spark.sql.functions.{window, _}
+import org.apache.spark.sql.functions.{from_json, lit, unix_timestamp, window}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{Dataset, SaveMode, SparkSession}
 
 object BotDetectorApp {
+
   def main(args: Array[String]) {
     val banTimeSecs = 600
-    val spark = SparkSession.builder
+    val sparkSession = SparkSession.builder
       .master("local[4]")
       .appName("Bot Detector")
       .config("spark.driver.memory", "2g")
@@ -30,7 +28,7 @@ object BotDetectorApp {
     Logger.getLogger("org.apache.spark").setLevel(Level.WARN)
     Logger.getLogger("org.spark-project").setLevel(Level.WARN)
 
-    val stream = spark
+    val stream = sparkSession
       .readStream
       .format("kafka")
       .option("kafka.bootstrap.servers", "localhost:9092")
@@ -38,7 +36,7 @@ object BotDetectorApp {
       .option("startingOffsets", "earliest")
       .load()
 
-    import spark.implicits._
+    import sparkSession.implicits._
 
     val userSchema = new StructType()
       .add("unix_time", "Timestamp")
@@ -59,25 +57,26 @@ object BotDetectorApp {
         var views = 0
         var categories: Set[Int] = Set()
         var total = 0
-        actions.foreach(action => {
+        actions.foreach { action =>
           action.`type` match {
             case "click" => clicks = clicks + 1
             case "view" => views = views + 1
           }
           categories = categories ++ Set(action.category_id.toInt)
           total = total + 1
-        })
+        }
         val ratio = if (views == 0) clicks else clicks.toDouble / views.toDouble
         UserActionAggregation(key._1, clicks, views, ratio, total, categories.size)
       })
 
-    val storedBots = spark.sparkContext.cassandraTable("botdetection", "stored_bots")
+    val storedBots = sparkSession.sparkContext.cassandraTable("botdetection", "stored_bots")
       .select("ip")
       .map(row => (row.get[String]("ip"), row.get[Long]("banUpTo")))
 
-    val igniteContext = new IgniteContext(spark.sparkContext, () => new IgniteConfiguration())
+    val igniteContext = new IgniteContext(sparkSession.sparkContext, () => new IgniteConfiguration())
 
     val cacheRdd = igniteContext.fromCache(new CacheConfiguration[String, Long](randomUUID().toString))
+
     cacheRdd.savePairs(storedBots)
 
     val storedBotsDF = cacheRdd
